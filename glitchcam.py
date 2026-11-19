@@ -148,8 +148,10 @@ class Keyboard(threading.Thread):
         import evdev
         import select
         while True:
+            self.devs = []
             try:
-                self.devs = [evdev.InputDevice(p) for p in find_keyboard()]
+                for p in find_keyboard():
+                    self.devs.append(evdev.InputDevice(p))
                 for d in self.devs:
                     try:
                         d.grab()  # keep keys away from the launcher while we run
@@ -163,6 +165,12 @@ class Keyboard(threading.Thread):
                             if ev.type == 1:
                                 self.q.put((ev.code, ev.value))
             except Exception:
+                # device vanished or failed to open: close what we have, retry
+                for d in self.devs:
+                    try:
+                        d.close()
+                    except Exception:
+                        pass
                 time.sleep(0.5)
 
 
@@ -284,7 +292,6 @@ class App:
         self.mosher = glitch.Mosher()
         self.last_jpeg = None
         self.recording = None  # dict, see start_clip
-        self.playback = None   # ffmpeg Popen
         self.busy = []         # background job labels
         self.hud_key = None
         self.hud_cache = None
@@ -408,8 +415,7 @@ class App:
         return " ".join(lbl for lbl, _ in glitch.bend_ops(self.levels["BEND"], self.held_wires, self.seed))
 
     def handle(self, code, value):
-        if (MODES[self.mode] == "BEND" and code in WIRE_KEYS and not self.show_help
-                and not self.playback):
+        if MODES[self.mode] == "BEND" and code in WIRE_KEYS and not self.show_help:
             if value == 1:
                 self.held_wires.add(WIRE_KEYS[code])
             elif value == 0:
@@ -425,9 +431,6 @@ class App:
         name, arg = act
         if name == "QUIT":
             self.running = False
-            return
-        if self.playback:
-            self.stop_playback()
             return
         if self.show_help:
             self.show_help = False
@@ -609,26 +612,6 @@ class App:
                 self.set_toast("CLIP SAVED" if rc == 0 else "CLIP ENCODE FAILED",
                                ACCENT if rc == 0 else GLYPH1, 2.5)
 
-    def start_playback(self, path):
-        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-re", "-i", path,
-               "-vf", f"scale={W}:-2,crop={W}:{H}", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"]
-        self.playback = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-
-    def stop_playback(self):
-        p, self.playback = self.playback, None
-        if p:
-            p.kill()
-            p.wait()
-
-    def playback_frame(self):
-        p = self.playback
-        n = W * H * 3
-        data = p.stdout.read(n)
-        if not data or len(data) < n:
-            self.stop_playback()
-            return None
-        return np.frombuffer(data, np.uint8).reshape(H, W, 3)
-
     # ---------------- HUD
     def hud(self):
         mode = MODES[self.mode]
@@ -727,10 +710,6 @@ class App:
 
     # ---------------- frame
     def frame(self):
-        if self.playback:
-            f = self.playback_frame()
-            if f is not None:
-                return f
         raw = self.grab()
         if raw is None:
             return None
@@ -775,15 +754,14 @@ class App:
             f = self.frame()
             if f is None:
                 continue
-            if self.recording and not self.playback:
+            if self.recording:
                 self.feed_clip(f)
             if self.flash:
                 f = 255 - f
                 self.flash -= 1
-            if not self.playback:
-                rgb, a, any_a = self.hud()
-                if any_a:
-                    f = blend(f, rgb, a)
+            rgb, a, any_a = self.hud()
+            if any_a:
+                f = blend(f, rgb, a)
             self.fb.show(f)
             now = time.time()
             self.fps = 0.9 * self.fps + 0.1 / max(1e-3, now - t_last)
@@ -794,7 +772,6 @@ class App:
 
     def close(self):
         try:
-            self.stop_playback()
             if self.recording:
                 self.stop_clip()
         except Exception:
