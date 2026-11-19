@@ -119,6 +119,7 @@ KEY = {
 }
 NUM_KEYS = {2: 0, 3: 1, 4: 2, 5: 3, 6: 4, 7: 5, 8: 6, 9: 7}  # 1..8 -> mode index
 WIRE_KEYS = {c: c - 2 for c in range(2, 11)}  # in BEND: 1..9 -> wire 0..8 (momentary)
+SHIFT_KEYS = {42, 54}    # with SHIFT held, 1..9 in BEND latch / unlatch a wire
 REPEATABLE = {"UP", "DOWN", "LEFT", "RIGHT"}
 
 
@@ -299,6 +300,8 @@ class App:
         self.last_mosh = None
         self.layers_key = None
         self.held_wires = set()
+        self.bend_toggled = set()  # wires flipped from the 1..level default
+        self.shift = False
         self.jobs = []  # detached clip encoders (Popen) still running
         self.fps = 0.0
         os.makedirs(WORK_DIR, exist_ok=True)
@@ -322,14 +325,18 @@ class App:
             names.discard("SENSOR")
         return {m: self.levels[m] for m in MODES if m in names}
 
-    @staticmethod
-    def layers_name(layers):
+    def layers_name(self, layers):
+        def tag(m, lv, sep):
+            if m == "BEND" and self.bend_toggled:
+                wires = "".join(str(w + 1) for w in sorted(self.bend_latched()))
+                return f"{m}{sep}W{wires or '0'}"
+            return f"{m}{sep}L{lv}" if sep else f"{m}{lv}"
         if not layers:
             return "CLEAN"
         if len(layers) == 1:
             (m, lv), = layers.items()
-            return f"{m}_L{lv}"
-        return "-".join(f"{m}{lv}" for m, lv in layers.items())
+            return tag(m, lv, "_")
+        return "-".join(tag(m, lv, "") for m, lv in layers.items())
 
     # ---------------- camera
     def start_camera(self):
@@ -409,17 +416,38 @@ class App:
     def bend_held(self):
         return tuple(sorted(self.held_wires))
 
+    def bend_toggles(self):
+        return tuple(sorted(self.bend_toggled))
+
+    def bend_latched(self):
+        return glitch.bend_latched(self.levels["BEND"], self.bend_toggled)
+
+    def bend_state(self):
+        """BEND layer value for glitch.decode: (level, held, toggled)."""
+        return (self.levels["BEND"], self.bend_held(), self.bend_toggles())
+
     def bend_label(self):
         if "BEND" not in self.active_layers():
             return ""
-        return " ".join(lbl for lbl, _ in glitch.bend_ops(self.levels["BEND"], self.held_wires, self.seed))
+        return " ".join(lbl for lbl, _ in glitch.bend_ops(
+            self.levels["BEND"], self.held_wires, self.seed, self.bend_toggled))
 
     def handle(self, code, value):
+        if code in SHIFT_KEYS:
+            self.shift = value != 0
+            return
         if MODES[self.mode] == "BEND" and code in WIRE_KEYS and not self.show_help:
-            if value == 1:
-                self.held_wires.add(WIRE_KEYS[code])
-            elif value == 0:
-                self.held_wires.discard(WIRE_KEYS[code])
+            w = WIRE_KEYS[code]
+            if value == 0:
+                self.held_wires.discard(w)
+            elif value == 1 and self.shift:
+                self.bend_toggled ^= {w}
+                name = glitch.bend_patches(self.seed)[w][0]
+                on = w in self.bend_latched()
+                self.set_toast("WIRE %d %s %s" % (w + 1, name, "LATCHED" if on else "OFF"),
+                               GLYPH2 if on else ACCENT)
+            elif value == 1:
+                self.held_wires.add(w)
             return
         if value == 0:
             if code in WIRE_KEYS:
@@ -449,6 +477,8 @@ class App:
                 self.sensor_armed = False
         elif name in ("UP", "DOWN"):
             self.level = max(1, min(9, self.level + (1 if name == "UP" else -1)))
+            if cur == "BEND":
+                self.bend_toggled.clear()  # intensity sets wires 1..n again
         elif name == "SEED":
             self.seed = int.from_bytes(os.urandom(2), "little") % 10000
             self.mosher.reset()
@@ -487,7 +517,7 @@ class App:
         raw = self.last_raw
         if raw is None:
             return
-        layers, seed, held = self.active_layers(), self.seed, self.bend_held()
+        layers, seed, bend = self.active_layers(), self.seed, self.bend_state()
         base = os.path.join(SAVE_DIR, f"GC_{self.stamp()}_{self.layers_name(layers)}_S{seed:04d}")
         mosh = self.last_mosh.copy() if ("MOSH" in layers and self.last_mosh is not None) else None
         self.flash = 2
@@ -504,7 +534,7 @@ class App:
                     qx, qy = glitch.full_grid(raw)
                     raw_layers = {k: v for k, v in layers.items() if k in glitch.RAW_LAYERS}
                     if "BEND" in raw_layers:
-                        raw_layers["BEND"] = (raw_layers["BEND"], held)
+                        raw_layers["BEND"] = bend
                     img = glitch.decode(raw, qx, qy, raw_layers, seed)
                     data = None
                     if "JPEG" in layers:
@@ -626,7 +656,7 @@ class App:
         key = (mode, self.level, self.seed, self.show_hud, self.show_help,
                toast[0] if toast else None, None if rec is None else int(rec * 4),
                self.sensor_armed, tuple(self.busy), len(self.jobs), sensor_label, tuple(self.stack),
-               self.bend_label())
+               self.bend_label(), self.bend_held(), self.bend_toggles())
         if key == self.hud_key:
             return self.hud_cache
         im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -658,9 +688,13 @@ class App:
             d.rectangle([0, H - 16, W, H], fill=BG + (190,))
             d.line([(0, H - 17), (W, H - 17)], fill=DIM + (255,))
             spaced_text(d, (6, H - 14), "INT", F_SMALLB, MUTED + (255,), 1)
+            latched = self.bend_latched() if mode == "BEND" else None
             for i in range(9):
                 x0 = 30 + i * 9
-                col = (GLYPH1 if i == self.level - 1 else ACCENT) if i < self.level else DIM
+                if latched is not None:  # BEND: one cell per wire
+                    col = GLYPH1 if i in self.held_wires else ACCENT if i in latched else DIM
+                else:
+                    col = (GLYPH1 if i == self.level - 1 else ACCENT) if i < self.level else DIM
                 d.rectangle([x0, H - 12, x0 + 6, H - 5], fill=col + (255,))
             spaced_text(d, (116, H - 14), "#%04d" % self.seed, F_SMALLB, ACCENT + (255,), 1)
             jobs = self.busy + (["ENC"] * min(1, len(self.jobs)))
@@ -696,11 +730,12 @@ class App:
                 ("S  /  C", "stack mode on top / clear stack"),
                 ("R", "new seed (same seed = same glitch)"),
                 ("1-9 (in BEND)", "hold = connect that wire"),
+                ("SHIFT+1-9 BEND", "latch / unlatch one wire"),
                 ("Y  TAB  ESC/Q", "arm SENSOR  hide HUD  quit"),
             ]
             for i, (k, v) in enumerate(rows):
-                d.text((8, 22 + i * 15), k, font=F_SMALLB, fill=ACCENT + (255,))
-                d.text((108, 22 + i * 15), v, font=F_SMALL, fill=WHITE + (255,))
+                d.text((8, 22 + i * 14), k, font=F_SMALLB, fill=ACCENT + (255,))
+                d.text((108, 22 + i * 14), v, font=F_SMALL, fill=WHITE + (255,))
             d.text((8, H - 14), "saves to " + SAVE_DIR.replace(os.path.expanduser("~"), "~"),
                    font=F_SMALL, fill=MUTED + (255,))
         arr = np.asarray(im)
@@ -716,7 +751,7 @@ class App:
         self.last_raw = raw
         layers = self.active_layers()
         if "BEND" in layers:
-            layers["BEND"] = (layers["BEND"], self.bend_held())
+            layers["BEND"] = self.bend_state()
         key = tuple(k for k in layers)
         if key != self.layers_key:
             self.layers_key = key

@@ -283,9 +283,14 @@ def apply_bend(planes, ops, qx, qy, raw):
     return [np.clip(p, 0, 1023).astype(np.uint16) for p in planes]
 
 
-def bend_ops(level, held, seed):
+def bend_latched(level, toggled=(), n=9):
+    """Wires that stay connected: 1..level, with each toggled wire flipped."""
+    return set(range(min(level, n))) ^ {t for t in toggled if 0 <= t < n}
+
+
+def bend_ops(level, held, seed, toggled=()):
     pats = bend_patches(seed)
-    on = set(range(level)) | {h for h in held if 0 <= h < len(pats)}
+    on = bend_latched(level, toggled, len(pats)) | {h for h in held if 0 <= h < len(pats)}
     return [pats[i] for i in sorted(on)]
 
 
@@ -293,6 +298,7 @@ def decode(raw, qx, qy, layers, seed):
     """One pass over the raw bytes with any mix of TEAR / DEPTH / SWAP.
 
     layers: {mode_name: level}. Unknown names are ignored here.
+    BEND may also be (level, held_wires) or (level, held_wires, toggled_wires).
     """
     rowfn = tear_rowfn(raw, layers["TEAR"], seed) if "TEAR" in layers else (lambda r: r * raw.stride)
     if "SWAP" in layers:
@@ -317,7 +323,9 @@ def decode(raw, qx, qy, layers, seed):
             m = (m.astype(np.uint16) << 2) | ((lsb >> sh[None, :]) & 3)
         planes.append(m)
     if bend:
-        planes = apply_bend(planes, [op for _, op in bend_ops(bend[0], bend[1], seed)], qx, qy, raw)
+        toggled = bend[2] if len(bend) > 2 else ()
+        planes = apply_bend(planes, [op for _, op in bend_ops(bend[0], bend[1], seed, toggled)],
+                            qx, qy, raw)
     R, G1, G2, B = assign(order, *planes)
     out = np.empty(R.shape + (3,), np.uint8)
     if ten and not depth:
