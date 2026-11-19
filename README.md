@@ -23,11 +23,16 @@ clips in `~/Pictures/GlitchCam` are kept.
 
 ## Keys
 
+The CardputerZero has no separate arrow or punctuation keys. The arrows are
+the orange `fn` layer (`F` up, `X` down, `Z` left, `C` right), and the blue
+`sym` layer holds `,` `/` `;` `.` on `V` `N` `A` `B`. A USB keyboard's real
+arrow and punctuation keys work too.
+
 | Key | Does |
 |---|---|
-| `,` `/` (or ← →) | previous / next glitch mode |
+| `fn`+`Z` / `fn`+`C` (or `sym`+`V` / `sym`+`N`) | previous / next glitch mode |
 | `1`–`8` | jump to a mode (except in BEND, see below) |
-| `;` `.` (or ↑ ↓) | intensity 1–9 (each mode remembers its own) |
+| `fn`+`F` / `fn`+`X` (or `sym`+`A` / `sym`+`B`) | intensity up / down, 1–9 (each mode remembers its own) |
 | `SPACE` / `ENTER` | take a still |
 | `V` | start / stop a video clip (max 5 min) |
 | `S` | stack the current mode, then pick another to layer on top |
@@ -63,7 +68,7 @@ itself, underneath everything else.
 BEND works like a bend box with nine wires. The image gets every wire that is
 connected right now:
 
-- **Latched by intensity:** `;` `.` (or ↑ ↓) set how many stay connected.
+- **Latched by intensity:** `fn`+`F` / `fn`+`X` set how many stay connected.
   Level *n* connects wires 1 to *n* with no keys held.
 - **Latched one at a time:** `SHIFT`+`1`–`9` latches that wire, or unlatches
   it if it's already on. This works on top of the intensity setting, so you

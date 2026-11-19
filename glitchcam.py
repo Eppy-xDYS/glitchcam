@@ -102,11 +102,15 @@ class Framebuffer:
 # --------------------------------------------------------------------------
 # Keyboard
 # --------------------------------------------------------------------------
+# The CardputerZero keyboard has no real punctuation keys: fn+F/X/Z/C send the
+# arrow codes, and the blue "sym" layer sends spare keycodes instead of the
+# symbol (sym+V ',' = 90, sym+N '/' = 92, sym+A ';' = 79, sym+B '.' = 91).
+# The real punctuation codes are kept for USB keyboards and the test hook.
 KEY = {
-    "LEFT": {105, 51},       # arrow / ','
-    "RIGHT": {106, 53},      # arrow / '/'
-    "UP": {103, 39},         # arrow / ';'
-    "DOWN": {108, 52},       # arrow / '.'
+    "LEFT": {105, 51, 90},   # fn+Z / ',' / sym+V
+    "RIGHT": {106, 53, 92},  # fn+C / '/' / sym+N
+    "UP": {103, 39, 79},     # fn+F / ';' / sym+A
+    "DOWN": {108, 52, 91},   # fn+X / '.' / sym+B
     "SHOT": {57, 28},        # space / enter
     "CLIP": {47},            # v
     "SEED": {19},            # r
@@ -738,7 +742,7 @@ class App:
                      "Worst case the sensor stalls and",
                      "GlitchCam restarts it. Nothing is",
                      "written persistently.",
-                     "[Y] ARM     [,/] OTHER MODE"]
+                     "[Y] ARM     [fn+Z/C] OTHER MODE"]
             for i, t in enumerate(lines):
                 d.text((40, 62 + i * 12), t, font=F_SMALL,
                        fill=(ACCENT if i == 4 else WHITE) + (255,))
@@ -756,8 +760,8 @@ class App:
             d.rectangle([0, 0, W, H], fill=BG + (238,))
             glyph_text(d, (8, 3), "GLITCH CAM", F_MODE, WHITE, spacing=2)
             rows = [
-                (",  /   or  < >", "glitch mode   (1-8 jump)"),
-                (";  .   or  ^ v", "intensity 1-9 (per mode)"),
+                ("fn+Z / fn+C", "glitch mode   (1-8 jump)"),
+                ("fn+F / fn+X", "intensity 1-9 (per mode)"),
                 ("SPACE / ENTER", "shoot still"),
                 ("V", "start/stop video clip"),
                 ("S  /  C", "stack mode on top / clear stack"),
