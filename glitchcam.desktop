@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=GlitchCam
+Comment=Hand-bent glitch camera: torn strides, wrong bit depth, bent ADC, datamosh
+Exec=/usr/share/APPLaunch/apps/glitchcam/run-glitchcam.sh
+Terminal=false
+Sysplause=true
+Icon=share/images/glitchcam.png
+Categories=Utility;
+StartupNotify=false
