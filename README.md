@@ -33,6 +33,7 @@ clips in `~/Pictures/GlitchCam` are kept.
 | `S` | stack the current mode, then pick another to layer on top |
 | `C` | clear the stack |
 | `R` | new seed (the same seed always gives the same glitch) |
+| `N` | type a seed: up to 4 digits, `ENTER` sets it, `BACKSPACE` deletes, `ESC` cancels |
 | `1`–`9` in BEND | **hold** to connect that wire, like the buttons on a bend box |
 | `SHIFT`+`1`–`9` in BEND | latch / unlatch that one wire |
 | `Y` | arm / disarm SENSOR mode |
@@ -105,6 +106,15 @@ BEND: on any other mode, `1`–`8` jump between modes instead.
 Stills keep the wires connected at the moment you press SPACE. Clips record
 every frame as it was, so pressing and releasing wires while recording plays
 back like working a bend box live.
+
+## Seed
+
+Every glitch's "random" choices come from the seed (0–9999, shown as `#1234`
+on the bottom bar): where TEAR cuts, which bytes JPEG flips, which wire is on
+which BEND key, which keyframes a MOSH clip loses, and so on. That keeps the
+damage still from frame to frame instead of flickering, and makes it
+repeatable. A random seed is picked at startup; `R` rolls a new one, and `N`
+lets you type one, e.g. from an old filename's `_S1234`.
 
 ## Output
 

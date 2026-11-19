@@ -110,6 +110,7 @@ KEY = {
     "SHOT": {57, 28},        # space / enter
     "CLIP": {47},            # v
     "SEED": {19},            # r
+    "SEEDSET": {49},         # n: type a seed
     "HELP": {35},            # h
     "HUD": {15},             # tab
     "ARM": {21},             # y
@@ -120,6 +121,7 @@ KEY = {
 NUM_KEYS = {2: 0, 3: 1, 4: 2, 5: 3, 6: 4, 7: 5, 8: 6, 9: 7}  # 1..8 -> mode index
 WIRE_KEYS = {c: c - 2 for c in range(2, 11)}  # in BEND: 1..9 -> wire 0..8 (momentary)
 SHIFT_KEYS = {42, 54}    # with SHIFT held, 1..9 in BEND latch / unlatch a wire
+DIGIT_KEYS = {c: str((c - 1) % 10) for c in range(2, 12)}  # 1..9, 0 -> "1".."9", "0"
 REPEATABLE = {"UP", "DOWN", "LEFT", "RIGHT"}
 
 
@@ -302,6 +304,7 @@ class App:
         self.held_wires = set()
         self.bend_toggled = set()  # wires flipped from the 1..level default
         self.shift = False
+        self.seed_entry = None     # digits typed so far while entering a seed
         self.jobs = []  # detached clip encoders (Popen) still running
         self.fps = 0.0
         os.makedirs(WORK_DIR, exist_ok=True)
@@ -432,9 +435,33 @@ class App:
         return " ".join(lbl for lbl, _ in glitch.bend_ops(
             self.levels["BEND"], self.held_wires, self.seed, self.bend_toggled))
 
+    def set_seed(self, seed):
+        self.seed = seed
+        self.mosher.reset()
+        self.set_toast("SEED #%04d" % seed)
+
+    def seed_key(self, code, value):
+        """Seed entry box: digits, BACKSPACE, ENTER sets, ESC cancels."""
+        if value == 0:
+            return
+        if code in DIGIT_KEYS and value == 1:
+            if len(self.seed_entry) < 4:
+                self.seed_entry += DIGIT_KEYS[code]
+        elif code == 14:  # backspace (repeats while held)
+            self.seed_entry = self.seed_entry[:-1]
+        elif code == 28 and value == 1:  # enter
+            digits, self.seed_entry = self.seed_entry, None
+            if digits:
+                self.set_seed(int(digits))
+        elif code == 1 and value == 1:  # esc
+            self.seed_entry = None
+
     def handle(self, code, value):
         if code in SHIFT_KEYS:
             self.shift = value != 0
+            return
+        if self.seed_entry is not None:
+            self.seed_key(code, value)
             return
         if MODES[self.mode] == "BEND" and code in WIRE_KEYS and not self.show_help:
             w = WIRE_KEYS[code]
@@ -480,9 +507,10 @@ class App:
             if cur == "BEND":
                 self.bend_toggled.clear()  # intensity sets wires 1..n again
         elif name == "SEED":
-            self.seed = int.from_bytes(os.urandom(2), "little") % 10000
-            self.mosher.reset()
-            self.set_toast("SEED #%04d" % self.seed)
+            self.set_seed(int.from_bytes(os.urandom(2), "little") % 10000)
+        elif name == "SEEDSET":
+            self.seed_entry = ""
+            self.held_wires.clear()
         elif name == "ARM" and (cur == "SENSOR" or "SENSOR" in self.stack):
             self.sensor_armed = not self.sensor_armed
             self.set_toast("SENSOR ARMED" if self.sensor_armed else "SENSOR SAFE",
@@ -656,7 +684,7 @@ class App:
         key = (mode, self.level, self.seed, self.show_hud, self.show_help,
                toast[0] if toast else None, None if rec is None else int(rec * 4),
                self.sensor_armed, tuple(self.busy), len(self.jobs), sensor_label, tuple(self.stack),
-               self.bend_label(), self.bend_held(), self.bend_toggles())
+               self.bend_label(), self.bend_held(), self.bend_toggles(), self.seed_entry)
         if key == self.hud_key:
             return self.hud_cache
         im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -714,6 +742,11 @@ class App:
             for i, t in enumerate(lines):
                 d.text((40, 62 + i * 12), t, font=F_SMALL,
                        fill=(ACCENT if i == 4 else WHITE) + (255,))
+        if self.seed_entry is not None:
+            d.rectangle([70, 48, W - 70, 118], fill=BG + (235,), outline=GLYPH2 + (255,))
+            glyph_text(d, (82, 52), "SEED", F_MODE, WHITE, spacing=2)
+            spaced_text(d, (82, 72), "#" + self.seed_entry + "_", F_TITLE, ACCENT + (255,), 2)
+            spaced_text(d, (82, 104), "0-9  ENTER OK  ESC CANCEL", F_SMALL, MUTED + (255,), 0)
         if toast:
             tw = d.textlength(toast[0], font=F_SMALLB) + 16
             x0 = (W - tw) // 2
@@ -728,7 +761,7 @@ class App:
                 ("SPACE / ENTER", "shoot still"),
                 ("V", "start/stop video clip"),
                 ("S  /  C", "stack mode on top / clear stack"),
-                ("R", "new seed (same seed = same glitch)"),
+                ("R  /  N", "new seed / type a seed"),
                 ("1-9 (in BEND)", "hold = connect that wire"),
                 ("SHIFT+1-9 BEND", "latch / unlatch one wire"),
                 ("Y  TAB  ESC/Q", "arm SENSOR  hide HUD  quit"),
