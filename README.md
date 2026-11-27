@@ -5,6 +5,20 @@ frames and decodes them wrong on purpose: bad stride, wrong bit depth, wrong Bay
 order, emulated bent ADC wires, flipped JPEG bytes, and H.264 with the keyframes
 removed. Optionally it also bends the sensor's own registers over I2C.
 
+![Wires connected one at a time on the CardputerZero](docs/demo/demo.gif)
+
+*BEND on the device: wires 2, 0, 5, R and T connected one at a time, then
+pulled again. [Full-quality video](docs/demo/demo.mp4).*
+
+| | | |
+|---|---|---|
+| ![Speckle and pixel-clock slip](docs/demo/speckle_pclk.jpg) | ![Posterized with drips](docs/demo/posterize_drips.jpg) | ![Speckle with sync wobble](docs/demo/speckle_hsync.jpg) |
+| `2` + `0`: speckle, pink/green flip | `1` + `5` + `0`: posterized, dripping | `2` + `R`: speckle, wavy sync |
+| ![Column ADC stripes](docs/demo/column_stripes.jpg) | ![Crossed bits with halo](docs/demo/crossed_halo.jpg) | ![Speckle, doubled](docs/demo/speckle_double.jpg) |
+| `1` + `U`: column stripes | `6` + `0` + `W`: crossed bits, halo | `2` + `E`: speckle, doubled |
+
+All shot as stills on the CardputerZero, 820×616 straight from the sensor.
+
 ## Install / remove
 
 ```bash
