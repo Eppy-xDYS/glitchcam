@@ -113,19 +113,17 @@ KEY = {
     "DOWN": {108, 52, 91},   # fn+X / '.' / sym+B
     "SHOT": {57, 28},        # space / enter
     "CLIP": {47},            # v
-    "SEED": {19},            # r
-    "SEEDSET": {49},         # n: type a seed
     "HELP": {35},            # h
     "HUD": {15},             # tab
     "ARM": {21},             # y
     "STACK": {31},           # s
     "UNSTACK": {46},         # c
-    "QUIT": {1, 16},         # esc / q
+    "QUIT": {1},             # esc
 }
 NUM_KEYS = {2: 0, 3: 1, 4: 2, 5: 3, 6: 4, 7: 5, 8: 6, 9: 7}  # 1..8 -> mode index
-WIRE_KEYS = {c: c - 2 for c in range(2, 11)}  # in BEND: 1..9 -> wire 0..8 (momentary)
-SHIFT_KEYS = {42, 54}    # with SHIFT held, 1..9 in BEND latch / unlatch a wire
-DIGIT_KEYS = {c: str((c - 1) % 10) for c in range(2, 12)}  # 1..9, 0 -> "1".."9", "0"
+WIRE_KEYS = {c: c - 2 for c in range(2, 12)}  # in BEND: 1..9, 0 -> wire 0..9 (press = on/off)
+WIRE_KEYS.update({16: 10, 17: 11, 18: 12, 19: 13, 20: 14, 22: 15})  # Q W E R T U -> wires 11..16
+SHIFT_KEYS = {42, 54}    # with SHIFT held, 1..9 in BEND connect a wire only while held
 REPEATABLE = {"UP", "DOWN", "LEFT", "RIGHT"}
 
 
@@ -284,11 +282,10 @@ class App:
         self.kbd.start()
         if os.environ.get("GLITCHCAM_KEYFIFO"):
             FifoKeys(self.q, os.environ["GLITCHCAM_KEYFIFO"]).start()
-        self.mode = 1
+        self.mode = MODES.index("BEND")  # start on the bend box, all wires off
         self.levels = {m: 4 for m in MODES}
-        self.levels["BEND"] = 2  # leaves wires 3-9 free to hold in by hand
+        self.levels["BEND"] = 0  # clean: press 1-0, Q-U to connect wires
         self.stack = []          # modes held on top of the current one
-        self.seed = int.from_bytes(os.urandom(2), "little") % 10000
         self.show_hud = True
         self.show_help = False
         self.toast = None  # (text, until, colour)
@@ -308,7 +305,6 @@ class App:
         self.held_wires = set()
         self.bend_toggled = set()  # wires flipped from the 1..level default
         self.shift = False
-        self.seed_entry = None     # digits typed so far while entering a seed
         self.jobs = []  # detached clip encoders (Popen) still running
         self.fps = 0.0
         os.makedirs(WORK_DIR, exist_ok=True)
@@ -334,9 +330,9 @@ class App:
 
     def layers_name(self, layers):
         def tag(m, lv, sep):
-            if m == "BEND" and self.bend_toggled:
-                wires = "".join(str(w + 1) for w in sorted(self.bend_latched()))
-                return f"{m}{sep}W{wires or '0'}"
+            if m == "BEND" and (self.bend_toggled or lv == 0):
+                wires = "".join(glitch.WIRE_LABELS[w] for w in sorted(self.bend_latched()))
+                return f"{m}{sep}K{wires}" if wires else f"{m}{sep}OFF"
             return f"{m}{sep}L{lv}" if sep else f"{m}{lv}"
         if not layers:
             return "CLEAN"
@@ -397,7 +393,7 @@ class App:
     # ---------------- sensor bending
     def sensor_presets(self):
         import sensorbend
-        return sensorbend.presets(self.seed)
+        return sensorbend.PRESETS
 
     def sync_sensor(self):
         want = "SENSOR" in self.active_layers()
@@ -437,48 +433,24 @@ class App:
         if "BEND" not in self.active_layers():
             return ""
         return " ".join(lbl for lbl, _ in glitch.bend_ops(
-            self.levels["BEND"], self.held_wires, self.seed, self.bend_toggled))
-
-    def set_seed(self, seed):
-        self.seed = seed
-        self.mosher.reset()
-        self.set_toast("SEED #%04d" % seed)
-
-    def seed_key(self, code, value):
-        """Seed entry box: digits, BACKSPACE, ENTER sets, ESC cancels."""
-        if value == 0:
-            return
-        if code in DIGIT_KEYS and value == 1:
-            if len(self.seed_entry) < 4:
-                self.seed_entry += DIGIT_KEYS[code]
-        elif code == 14:  # backspace (repeats while held)
-            self.seed_entry = self.seed_entry[:-1]
-        elif code == 28 and value == 1:  # enter
-            digits, self.seed_entry = self.seed_entry, None
-            if digits:
-                self.set_seed(int(digits))
-        elif code == 1 and value == 1:  # esc
-            self.seed_entry = None
+            self.levels["BEND"], self.held_wires, self.bend_toggled))
 
     def handle(self, code, value):
         if code in SHIFT_KEYS:
             self.shift = value != 0
-            return
-        if self.seed_entry is not None:
-            self.seed_key(code, value)
             return
         if MODES[self.mode] == "BEND" and code in WIRE_KEYS and not self.show_help:
             w = WIRE_KEYS[code]
             if value == 0:
                 self.held_wires.discard(w)
             elif value == 1 and self.shift:
-                self.bend_toggled ^= {w}
-                name = glitch.bend_patches(self.seed)[w][0]
-                on = w in self.bend_latched()
-                self.set_toast("WIRE %d %s %s" % (w + 1, name, "LATCHED" if on else "OFF"),
-                               GLYPH2 if on else ACCENT)
-            elif value == 1:
                 self.held_wires.add(w)
+            elif value == 1:
+                self.bend_toggled ^= {w}
+                name = glitch.BEND_WIRES[w][0]
+                on = w in self.bend_latched()
+                self.set_toast("WIRE %s %s %s" % (glitch.WIRE_LABELS[w], name, "ON" if on else "OFF"),
+                               GLYPH2 if on else ACCENT)
             return
         if value == 0:
             if code in WIRE_KEYS:
@@ -507,14 +479,10 @@ class App:
             if MODES[self.mode] != "SENSOR" and "SENSOR" not in self.stack:
                 self.sensor_armed = False
         elif name in ("UP", "DOWN"):
-            self.level = max(1, min(9, self.level + (1 if name == "UP" else -1)))
+            lo = 0 if cur == "BEND" else 1  # BEND 0 = clean, no wires
+            self.level = max(lo, min(9, self.level + (1 if name == "UP" else -1)))
             if cur == "BEND":
                 self.bend_toggled.clear()  # intensity sets wires 1..n again
-        elif name == "SEED":
-            self.set_seed(int.from_bytes(os.urandom(2), "little") % 10000)
-        elif name == "SEEDSET":
-            self.seed_entry = ""
-            self.held_wires.clear()
         elif name == "ARM" and (cur == "SENSOR" or "SENSOR" in self.stack):
             self.sensor_armed = not self.sensor_armed
             self.set_toast("SENSOR ARMED" if self.sensor_armed else "SENSOR SAFE",
@@ -549,8 +517,8 @@ class App:
         raw = self.last_raw
         if raw is None:
             return
-        layers, seed, bend = self.active_layers(), self.seed, self.bend_state()
-        base = os.path.join(SAVE_DIR, f"GC_{self.stamp()}_{self.layers_name(layers)}_S{seed:04d}")
+        layers, bend = self.active_layers(), self.bend_state()
+        base = os.path.join(SAVE_DIR, f"GC_{self.stamp()}_{self.layers_name(layers)}")
         mosh = self.last_mosh.copy() if ("MOSH" in layers and self.last_mosh is not None) else None
         self.flash = 2
 
@@ -567,11 +535,11 @@ class App:
                     raw_layers = {k: v for k, v in layers.items() if k in glitch.RAW_LAYERS}
                     if "BEND" in raw_layers:
                         raw_layers["BEND"] = bend
-                    img = glitch.decode(raw, qx, qy, raw_layers, seed)
+                    img = glitch.decode(raw, qx, qy, raw_layers)
                     data = None
                     if "JPEG" in layers:
                         for k in range(8):
-                            _, data = glitch.corrupt_jpeg(img, layers["JPEG"], seed + k, quality=88)
+                            _, data = glitch.corrupt_jpeg(img, layers["JPEG"], quality=88, salt=k)
                             if data:
                                 break
                     if data:
@@ -591,9 +559,9 @@ class App:
 
     # ---------------- clips
     def start_clip(self):
-        layers, seed = self.active_layers(), self.seed
-        name = f"GC_{self.stamp()}_{self.layers_name(layers)}_S{seed:04d}"
-        rec = {"t0": time.time(), "layers": layers, "seed": seed, "frames": 0,
+        layers = self.active_layers()
+        name = f"GC_{self.stamp()}_{self.layers_name(layers)}"
+        rec = {"t0": time.time(), "layers": layers, "frames": 0,
                "out": os.path.join(SAVE_DIR, name + ".mp4")}
         if set(layers) == {"MOSH"}:
             # real codec datamosh: hardware H.264 of the camera, keyframes cut later
@@ -651,7 +619,7 @@ class App:
             except Exception:
                 pass
             cmd = [sys.executable, os.path.join(APP_DIR, "h264mosh.py"), rec["src"],
-                   rec["out"], str(rec["layers"]["MOSH"]), str(rec["seed"])]
+                   rec["out"], str(rec["layers"]["MOSH"])]
         else:
             rec["fh"].close()
             if rec["frames"] < 2:
@@ -685,10 +653,10 @@ class App:
         sensor_label = None
         if mode == "SENSOR":
             sensor_label = self.sensor_presets()[self.level - 1][0]
-        key = (mode, self.level, self.seed, self.show_hud, self.show_help,
+        key = (mode, self.level, self.show_hud, self.show_help,
                toast[0] if toast else None, None if rec is None else int(rec * 4),
                self.sensor_armed, tuple(self.busy), len(self.jobs), sensor_label, tuple(self.stack),
-               self.bend_label(), self.bend_held(), self.bend_toggles(), self.seed_entry)
+               self.bend_label(), self.bend_held(), self.bend_toggles())
         if key == self.hud_key:
             return self.hud_cache
         im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -716,19 +684,21 @@ class App:
                 spaced_text(d, (W - 50, 3), "REC %d:%02d" % (rec // 60, rec % 60), F_SMALLB, GLYPH1 + (255,), 1)
             else:
                 spaced_text(d, (W - 30, 3), "%d/%d" % (self.mode + 1, len(MODES)), F_SMALLB, ACCENT + (255,), 1)
-            # bottom bar: intensity meter, seed, hints
+            # bottom bar: intensity meter, hints
             d.rectangle([0, H - 16, W, H], fill=BG + (190,))
             d.line([(0, H - 17), (W, H - 17)], fill=DIM + (255,))
             spaced_text(d, (6, H - 14), "INT", F_SMALLB, MUTED + (255,), 1)
             latched = self.bend_latched() if mode == "BEND" else None
-            for i in range(9):
-                x0 = 30 + i * 9
+            ncell = len(glitch.BEND_WIRES) if latched is not None else 9
+            pitch = 9 if ncell <= 10 else 7
+            for i in range(ncell):
+                x0 = 30 + i * pitch
                 if latched is not None:  # BEND: one cell per wire
                     col = GLYPH1 if i in self.held_wires else ACCENT if i in latched else DIM
                 else:
                     col = (GLYPH1 if i == self.level - 1 else ACCENT) if i < self.level else DIM
                 d.rectangle([x0, H - 12, x0 + 6, H - 5], fill=col + (255,))
-            spaced_text(d, (116, H - 14), "#%04d" % self.seed, F_SMALLB, ACCENT + (255,), 1)
+            spaced_text(d, (34 + ncell * pitch, H - 14), "L%d" % self.level, F_SMALLB, ACCENT + (255,), 1)
             jobs = self.busy + (["ENC"] * min(1, len(self.jobs)))
             hint = "  ".join(jobs) + " ..." if jobs else "SPC SHOT  V CLIP  H HELP"
             spaced_text(d, (168, H - 14), hint, F_SMALL, MUTED + (255,), 0)
@@ -746,11 +716,6 @@ class App:
             for i, t in enumerate(lines):
                 d.text((40, 62 + i * 12), t, font=F_SMALL,
                        fill=(ACCENT if i == 4 else WHITE) + (255,))
-        if self.seed_entry is not None:
-            d.rectangle([70, 48, W - 70, 118], fill=BG + (235,), outline=GLYPH2 + (255,))
-            glyph_text(d, (82, 52), "SEED", F_MODE, WHITE, spacing=2)
-            spaced_text(d, (82, 72), "#" + self.seed_entry + "_", F_TITLE, ACCENT + (255,), 2)
-            spaced_text(d, (82, 104), "0-9  ENTER OK  ESC CANCEL", F_SMALL, MUTED + (255,), 0)
         if toast:
             tw = d.textlength(toast[0], font=F_SMALLB) + 16
             x0 = (W - tw) // 2
@@ -761,14 +726,13 @@ class App:
             glyph_text(d, (8, 3), "GLITCH CAM", F_MODE, WHITE, spacing=2)
             rows = [
                 ("fn+Z / fn+C", "glitch mode   (1-8 jump)"),
-                ("fn+F / fn+X", "intensity 1-9 (per mode)"),
+                ("fn+F / fn+X", "intensity (BEND: wires 1-n)"),
                 ("SPACE / ENTER", "shoot still"),
                 ("V", "start/stop video clip"),
                 ("S  /  C", "stack mode on top / clear stack"),
-                ("R  /  N", "new seed / type a seed"),
-                ("1-9 (in BEND)", "hold = connect that wire"),
-                ("SHIFT+1-9 BEND", "latch / unlatch one wire"),
-                ("Y  TAB  ESC/Q", "arm SENSOR  hide HUD  quit"),
+                ("1-0, Q-U BEND", "press = wire on / off"),
+                ("SHIFT+key BEND", "hold = wire on while held"),
+                ("Y  TAB  ESC", "arm SENSOR  hide HUD  quit"),
             ]
             for i, (k, v) in enumerate(rows):
                 d.text((8, 22 + i * 14), k, font=F_SMALLB, fill=ACCENT + (255,))
@@ -797,11 +761,11 @@ class App:
             qx, qy = glitch.grid(raw, W, 240, aspect_crop=False)
         else:
             qx, qy = glitch.grid(raw, W, H)
-        img, _ = glitch.render_stack(raw, qx, qy, layers, self.seed, fallback=self.last_jpeg)
+        img, _ = glitch.render_stack(raw, qx, qy, layers, fallback=self.last_jpeg)
         if "JPEG" in layers:
             self.last_jpeg = img
         if "MOSH" in layers:
-            img = self.mosher.step(img, layers["MOSH"], self.seed)
+            img = self.mosher.step(img, layers["MOSH"])
             self.last_mosh = img
             y0 = (img.shape[0] - H) // 2
             img = img[y0:y0 + H]

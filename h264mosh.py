@@ -140,8 +140,8 @@ def renumber(nal, sps, frame_num, poc):
 
 
 # ---------------------------------------------------------------- moshing
-def mosh(data, level, seed):
-    rng = random.Random(seed)
+def mosh(data, level):
+    rng = random.Random(level)  # fixed per level: same clip, same cuts
     sps = None
     out = []
     dropped = kept_idr = 0
@@ -177,10 +177,10 @@ def mosh(data, level, seed):
     return b"".join(out), dropped
 
 
-def mosh_to_mp4(h264_path, mp4_path, level, seed, fps=30):
+def mosh_to_mp4(h264_path, mp4_path, level, fps=30):
     with open(h264_path, "rb") as f:
         data = f.read()
-    moshed, dropped = mosh(data, level, seed)
+    moshed, dropped = mosh(data, level)
     cmd = [
         "nice", "-n", "10",
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
@@ -196,12 +196,12 @@ def mosh_to_mp4(h264_path, mp4_path, level, seed, fps=30):
 
 
 def main(argv):
-    """Detached worker: h264mosh.py IN.h264 OUT.mp4 LEVEL SEED (deletes IN)."""
+    """Detached worker: h264mosh.py IN.h264 OUT.mp4 LEVEL (deletes IN)."""
     import os
-    src, dst, level, seed = argv[1], argv[2], int(argv[3]), int(argv[4])
+    src, dst, level = argv[1], argv[2], int(argv[3])
     part = dst + ".part.mp4"
     try:
-        mosh_to_mp4(src, part, level, seed)
+        mosh_to_mp4(src, part, level)
         os.replace(part, dst)
     finally:
         for f in (src, part):

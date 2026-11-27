@@ -29,25 +29,23 @@ def _xor(mask):
     return ("xor", mask)
 
 
-def presets(seed):
-    """Level 1..9 -> (label, [(reg, value_or_op), ...])."""
-    r = (seed * 2654435761) & 0xFFFFFFFF
-    col = [(r >> s) & 0x3 for s in range(0, 8, 2)]
-    lo = [(r >> s) & 0xFF for s in range(8, 32, 8)] + [r & 0xFF]
-    return [
-        ("DIGITAL GAIN x4", [(0x0158, 0x04), (0x0159, 0x00)]),
-        ("DIGITAL GAIN x16", [(0x0158, 0x0F), (0x0159, 0xFF)]),
-        ("MIRROR (BAYER SLIP)", [(0x0172, _xor(1))]),
-        ("FLIP (BAYER SLIP)", [(0x0172, _xor(2))]),
-        ("SKIP READOUT X3", [(0x0383, 3)]),
-        ("CSI RAW10->8", [(0x018C, 0x0A), (0x018D, 0x08)]),
-        ("TEST: COLOUR BARS", [(0x0600, 0), (0x0601, 2)]),
-        ("TEST: PN9 NOISE", [(0x0600, 0), (0x0601, 4)]),
-        ("TEST: SOLID #%02X%02X" % (lo[0], lo[1]),
-         [(0x0600, 0), (0x0601, 1),
-          (0x0602, col[0]), (0x0603, lo[0]), (0x0604, col[1]), (0x0605, lo[1]),
-          (0x0606, col[2]), (0x0607, lo[2]), (0x0608, col[3]), (0x0609, lo[3])]),
-    ]
+# Level 1..9 -> (label, [(reg, value_or_op), ...]). Fixed: the same level is
+# always the same register poke.
+PRESETS = [
+    ("DIGITAL GAIN x4", [(0x0158, 0x04), (0x0159, 0x00)]),
+    ("DIGITAL GAIN x16", [(0x0158, 0x0F), (0x0159, 0xFF)]),
+    ("MIRROR (BAYER SLIP)", [(0x0172, _xor(1))]),
+    ("FLIP (BAYER SLIP)", [(0x0172, _xor(2))]),
+    ("SKIP READOUT X3", [(0x0383, 3)]),
+    ("CSI RAW10->8", [(0x018C, 0x0A), (0x018D, 0x08)]),
+    ("TEST: COLOUR BARS", [(0x0600, 0), (0x0601, 2)]),
+    ("TEST: PN9 NOISE", [(0x0600, 0), (0x0601, 4)]),
+    # solid colour (10-bit per channel, R / GR / B / GB): hot magenta
+    ("TEST: SOLID MAGENTA",
+     [(0x0600, 0), (0x0601, 1),
+      (0x0602, 0x03), (0x0603, 0xFF), (0x0604, 0x00), (0x0605, 0x40),
+      (0x0606, 0x03), (0x0607, 0xFF), (0x0608, 0x00), (0x0609, 0x40)]),
+]
 
 
 def find_bus():
