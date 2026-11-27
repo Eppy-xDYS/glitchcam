@@ -207,9 +207,9 @@ def depth_luts(raw, level):
 # chip, so each "wire" is emulated on the 10-bit samples at the same stage.
 # --------------------------------------------------------------------------
 # The bend box. Each key is soldered to one point and always does the same
-# thing, roughly from subtle (1) to wrecked (9). Level n connects wires 1..n.
-# Key 0 is wire 10, PCLK: the pink/green flip of a bent sensor's pixel clock.
-# Wires 11-16 sit on Q W E R T U. Intensity only ever connects wires 1-9.
+# thing. Keys 1-9 and 0 are the number row, Q W E R T U the row below.
+# The values here are each wire's strength at 5; every wire has its own
+# strength 1-9 that turns it down or up from there (see wire_strength).
 BEND_WIRES = [
     ("B8~B7", ("bridge", 8, 7)),          # 1: two high data lines shorted
     ("B8~B4", ("bridge", 8, 4)),          # 2: high line shorted to a noisy low one: speckle
@@ -220,11 +220,11 @@ BEND_WIRES = [
     ("ADCCK", ("adcck", 6, 202)),         # 7: ADC clock dropouts
     ("XSG", ("xsg", 12, 303)),            # 8: transfer gate glitch
     ("B9 LO", ("stuck0", 9)),             # 9: top data line stuck off
-    ("PCLK", ("pclk",)),                  # 0: pixel clock slips one pixel
+    ("PCLK", ("pclk", 1)),                # 0: pixel clock slips one pixel
     # second row of the box, on the letter keys under the numbers
     ("HSMEAR", ("hsmear", 0.97)),         # Q: horizontal readout lag: rows smear right
     ("HALO", ("halo", 6, 2.5)),           # W: amp ringing: glowing outlines on edges
-    ("DOUBLE", ("double",)),              # E: line read twice as fast: picture twice side by side
+    ("DOUBLE", ("double", 2)),            # E: line read twice as fast: picture twice side by side
     ("HSYNC", ("hsync", 22)),             # R: horizontal sync wobbles: wavy, jittering rows
     ("SCAN", ("scan", 8, 3.0)),           # T: sync lost: picture breaks into wavy scan lines
     ("COLADC", ("coladc", 3, 4)),         # U: column ADCs bent: fixed stripes in bright areas
@@ -274,7 +274,7 @@ def apply_bend(planes, ops, qx, qy, raw):
                       for i, v in enumerate(planes)]
         elif kind == "pclk":  # pixel clock slips: every sample lands one pixel late,
             # so the Bayer phase shifts and green reads as red/blue (pink/green flip)
-            nxt = _remap(qx, qx + 1)
+            nxt = _remap(qx, qx + op[1])
             a, b, c, d = planes
             planes = [b, a[:, nxt], d, c[:, nxt]]
         elif kind == "shp":  # sample-hold timing: neighbour leaks in, chroma ghost
@@ -348,7 +348,7 @@ def apply_bend(planes, ops, qx, qy, raw):
                 blur = sum(v[:, j] for j in near) // 4
                 planes[i] = v + ((v - blur) * op[2]).astype(np.int32)
         elif kind == "double":  # line clocked out twice per row: two copies side by side
-            idx = _remap(qx, (qx * 2) % raw.qw)
+            idx = _remap(qx, (qx * op[1]) % raw.qw)
             planes = [v[:, idx] for v in planes]
         elif kind == "hsync":  # each row starts late by a wobble that follows its brightness
             lum = sum(planes) // 4
@@ -375,22 +375,68 @@ def apply_bend(planes, ops, qx, qy, raw):
     return [np.clip(p, 0, 1023).astype(np.uint16) for p in planes]
 
 
-def bend_latched(level, toggled=(), n=len(BEND_WIRES)):
-    """Wires that stay connected: 1..level, with each toggled wire flipped."""
-    return set(range(min(level, n))) ^ {t for t in toggled if 0 <= t < n}
+def wire_strength(op, level):
+    """A wire's op at intensity 1-9. Level 5 is the op as listed in BEND_WIRES.
+
+    Data-line wires move to lower (subtler) or higher (harsher) bits; the
+    rest scale their size, gain or reach by a factor from 0.5x to 2x.
+    """
+    k = 2.0 ** ((level - 5) / 4.0)        # 0.5 at 1, 1.0 at 5, 2.0 at 9
+    off = int(round((level - 5) / 2.0))   # -2 .. +2 bits
+    kind = op[0]
+
+    def bit(b):
+        return max(1, min(9, b + off))
+
+    if kind == "bridge":
+        hi, lo = op[1], op[2]
+        if hi - lo == 1:                  # two neighbouring high lines: move both
+            hi = bit(hi)
+            return (kind, hi, max(0, hi - 1))
+        return (kind, bit(hi), lo)        # high line to the noisy low one: move the high end
+    if kind == "swap":
+        a = bit(op[1])
+        return (kind, a, max(0, a - 1))
+    if kind in ("stuck0", "stuck1"):
+        return (kind, bit(op[1]))
+    if kind == "vref":
+        return (kind,) + tuple(1.0 + (g - 1.0) * k for g in op[1:])
+    if kind in ("shp", "hsync"):
+        return (kind, max(1, int(round(op[1] * k))))
+    if kind in ("adcck", "xsg"):
+        return (kind, max(2, int(round(op[1] * k))), op[2])
+    if kind in ("xv", "hsmear"):          # leak per line: longer drips / smears when stronger
+        return (kind, 1.0 - (1.0 - op[1]) / k)
+    if kind == "halo":
+        return (kind, max(2, int(round(op[1] * k))), op[2] * k)
+    if kind == "scan":
+        return (kind, op[1], op[2] * k)
+    if kind == "coladc":
+        return (kind, op[1], max(2, int(round(op[2] / k))))
+    if kind == "pclk":                    # always an odd slip, so the colours always flip
+        return (kind, {1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 3, 7: 3, 8: 5, 9: 5}[level])
+    if kind == "double":
+        return (kind, 2 if level <= 5 else 3 if level <= 7 else 4)
+    return op
 
 
-def bend_ops(level, held, toggled=()):
-    pats = BEND_WIRES
-    on = bend_latched(level, toggled, len(pats)) | {h for h in held if 0 <= h < len(pats)}
-    return [pats[i] for i in sorted(on)]
+def bend_ops(levels, held, toggled=()):
+    """Connected wires (pressed on, or held) as ops, each at its own strength.
+
+    levels: one strength 1-9 per wire (a single int applies to every wire).
+    """
+    n = len(BEND_WIRES)
+    if isinstance(levels, int):
+        levels = (levels,) * n
+    on = {t for t in toggled if 0 <= t < n} | {h for h in held if 0 <= h < n}
+    return [(BEND_WIRES[i][0], wire_strength(BEND_WIRES[i][1], levels[i])) for i in sorted(on)]
 
 
 def decode(raw, qx, qy, layers):
     """One pass over the raw bytes with any mix of TEAR / DEPTH / SWAP.
 
     layers: {mode_name: level}. Unknown names are ignored here.
-    BEND may also be (level, held_wires) or (level, held_wires, toggled_wires).
+    BEND is (per-wire strengths, held_wires, wires_pressed_on).
     """
     rowfn = tear_rowfn(raw, layers["TEAR"]) if "TEAR" in layers else (lambda r: r * raw.stride)
     if "SWAP" in layers:

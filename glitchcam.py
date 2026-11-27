@@ -284,7 +284,7 @@ class App:
             FifoKeys(self.q, os.environ["GLITCHCAM_KEYFIFO"]).start()
         self.mode = MODES.index("BEND")  # start on the bend box, all wires off
         self.levels = {m: 4 for m in MODES}
-        self.levels["BEND"] = 0  # clean: press 1-0, Q-U to connect wires
+        self.levels["BEND"] = 5  # unused: in BEND each wire has its own strength
         self.stack = []          # modes held on top of the current one
         self.show_hud = True
         self.show_help = False
@@ -303,7 +303,9 @@ class App:
         self.last_mosh = None
         self.layers_key = None
         self.held_wires = set()
-        self.bend_toggled = set()  # wires flipped from the 1..level default
+        self.bend_toggled = set()  # wires pressed on
+        self.wire_level = [5] * len(glitch.BEND_WIRES)  # each wire's own strength 1-9
+        self.on_order = []         # wires pressed on, oldest first; the knob is on the last
         self.shift = False
         self.jobs = []  # detached clip encoders (Popen) still running
         self.fps = 0.0
@@ -330,8 +332,9 @@ class App:
 
     def layers_name(self, layers):
         def tag(m, lv, sep):
-            if m == "BEND" and (self.bend_toggled or lv == 0):
-                wires = "".join(glitch.WIRE_LABELS[w] for w in sorted(self.bend_latched()))
+            if m == "BEND":  # each wire key followed by its strength: K27R4 = 2 at 7, R at 4
+                wires = "".join(glitch.WIRE_LABELS[w] + str(self.wire_level[w])
+                                for w in sorted(self.bend_latched()))
                 return f"{m}{sep}K{wires}" if wires else f"{m}{sep}OFF"
             return f"{m}{sep}L{lv}" if sep else f"{m}{lv}"
         if not layers:
@@ -423,17 +426,22 @@ class App:
         return tuple(sorted(self.bend_toggled))
 
     def bend_latched(self):
-        return glitch.bend_latched(self.levels["BEND"], self.bend_toggled)
+        return set(self.bend_toggled)
+
+    @property
+    def knob(self):
+        """The wire fn+F / fn+X adjust: the last one pressed on that is still on."""
+        return self.on_order[-1] if self.on_order else None
 
     def bend_state(self):
-        """BEND layer value for glitch.decode: (level, held, toggled)."""
-        return (self.levels["BEND"], self.bend_held(), self.bend_toggles())
+        """BEND layer value for glitch.decode: (strengths, held, pressed on)."""
+        return (tuple(self.wire_level), self.bend_held(), self.bend_toggles())
 
     def bend_label(self):
         if "BEND" not in self.active_layers():
             return ""
-        return " ".join(lbl for lbl, _ in glitch.bend_ops(
-            self.levels["BEND"], self.held_wires, self.bend_toggled))
+        on = sorted(self.bend_toggled | self.held_wires)
+        return " ".join("%s:%d" % (glitch.BEND_WIRES[w][0], self.wire_level[w]) for w in on)
 
     def handle(self, code, value):
         if code in SHIFT_KEYS:
@@ -447,9 +455,14 @@ class App:
                 self.held_wires.add(w)
             elif value == 1:
                 self.bend_toggled ^= {w}
+                if w in self.on_order:
+                    self.on_order.remove(w)
+                on = w in self.bend_toggled
+                if on:
+                    self.on_order.append(w)  # the knob moves to this wire
                 name = glitch.BEND_WIRES[w][0]
-                on = w in self.bend_latched()
-                self.set_toast("WIRE %s %s %s" % (glitch.WIRE_LABELS[w], name, "ON" if on else "OFF"),
+                self.set_toast("WIRE %s %s %s" % (glitch.WIRE_LABELS[w], name,
+                                                  "ON %d" % self.wire_level[w] if on else "OFF"),
                                GLYPH2 if on else ACCENT)
             return
         if value == 0:
@@ -479,10 +492,17 @@ class App:
             if MODES[self.mode] != "SENSOR" and "SENSOR" not in self.stack:
                 self.sensor_armed = False
         elif name in ("UP", "DOWN"):
-            lo = 0 if cur == "BEND" else 1  # BEND 0 = clean, no wires
-            self.level = max(lo, min(9, self.level + (1 if name == "UP" else -1)))
-            if cur == "BEND":
-                self.bend_toggled.clear()  # intensity sets wires 1..n again
+            step = 1 if name == "UP" else -1
+            if cur == "BEND":  # the knob: strength of the last wire pressed on
+                w = self.knob
+                if w is None:
+                    self.set_toast("PRESS A WIRE FIRST", GLYPH1)
+                else:
+                    self.wire_level[w] = max(1, min(9, self.wire_level[w] + step))
+                    self.set_toast("WIRE %s %s STRENGTH %d" % (
+                        glitch.WIRE_LABELS[w], glitch.BEND_WIRES[w][0], self.wire_level[w]))
+            else:
+                self.level = max(1, min(9, self.level + step))
         elif name == "ARM" and (cur == "SENSOR" or "SENSOR" in self.stack):
             self.sensor_armed = not self.sensor_armed
             self.set_toast("SENSOR ARMED" if self.sensor_armed else "SENSOR SAFE",
@@ -656,7 +676,7 @@ class App:
         key = (mode, self.level, self.show_hud, self.show_help,
                toast[0] if toast else None, None if rec is None else int(rec * 4),
                self.sensor_armed, tuple(self.busy), len(self.jobs), sensor_label, tuple(self.stack),
-               self.bend_label(), self.bend_held(), self.bend_toggles())
+               self.bend_label(), self.bend_held(), self.bend_toggles(), self.knob)
         if key == self.hud_key:
             return self.hud_cache
         im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -693,15 +713,24 @@ class App:
             pitch = 9 if ncell <= 10 else 7
             for i in range(ncell):
                 x0 = 30 + i * pitch
-                if latched is not None:  # BEND: one cell per wire
-                    col = GLYPH1 if i in self.held_wires else ACCENT if i in latched else DIM
-                else:
-                    col = (GLYPH1 if i == self.level - 1 else ACCENT) if i < self.level else DIM
+                if latched is not None:  # BEND: one bar per wire, as tall as its strength
+                    on = i in latched or i in self.held_wires
+                    col = (WHITE if i == self.knob else GLYPH1 if i in self.held_wires
+                           else ACCENT if on else DIM)
+                    top = H - 5 - (self.wire_level[i] if on else 1)
+                    d.rectangle([x0, top, x0 + 5, H - 4], fill=col + (255,))
+                    continue
+                col = (GLYPH1 if i == self.level - 1 else ACCENT) if i < self.level else DIM
                 d.rectangle([x0, H - 12, x0 + 6, H - 5], fill=col + (255,))
-            spaced_text(d, (34 + ncell * pitch, H - 14), "L%d" % self.level, F_SMALLB, ACCENT + (255,), 1)
+            if latched is not None:
+                k = self.knob
+                knob = "%s:%d" % (glitch.WIRE_LABELS[k], self.wire_level[k]) if k is not None else "--"
+            else:
+                knob = "L%d" % self.level
+            xe = spaced_text(d, (34 + ncell * pitch, H - 14), knob, F_SMALLB, ACCENT + (255,), 1)
             jobs = self.busy + (["ENC"] * min(1, len(self.jobs)))
             hint = "  ".join(jobs) + " ..." if jobs else "SPC SHOT  V CLIP  H HELP"
-            spaced_text(d, (168, H - 14), hint, F_SMALL, MUTED + (255,), 0)
+            spaced_text(d, (max(168, xe + 10), H - 14), hint, F_SMALL, MUTED + (255,), 0)
             if "SENSOR" in self.active_layers():
                 d.rectangle([0, 19, 2, H - 18], fill=GLYPH1 + (255,))
                 d.rectangle([W - 3, 19, W, H - 18], fill=GLYPH1 + (255,))
@@ -726,7 +755,7 @@ class App:
             glyph_text(d, (8, 3), "GLITCH CAM", F_MODE, WHITE, spacing=2)
             rows = [
                 ("fn+Z / fn+C", "glitch mode   (1-8 jump)"),
-                ("fn+F / fn+X", "intensity (BEND: wires 1-n)"),
+                ("fn+F / fn+X", "intensity (BEND: last wire's)"),
                 ("SPACE / ENTER", "shoot still"),
                 ("V", "start/stop video clip"),
                 ("S  /  C", "stack mode on top / clear stack"),

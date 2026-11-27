@@ -46,7 +46,7 @@ arrow and punctuation keys work too.
 |---|---|
 | `fn`+`Z` / `fn`+`C` (or `sym`+`V` / `sym`+`N`) | previous / next glitch mode |
 | `1`–`8` | jump to a mode (except in BEND, see below) |
-| `fn`+`F` / `fn`+`X` (or `sym`+`A` / `sym`+`B`) | intensity up / down, 1–9, or 0–9 in BEND (each mode remembers its own) |
+| `fn`+`F` / `fn`+`X` (or `sym`+`A` / `sym`+`B`) | intensity up / down, 1–9 (each mode remembers its own; in BEND, the strength of the last wire you pressed) |
 | `SPACE` / `ENTER` | take a still |
 | `V` | start / stop a video clip (max 5 min) |
 | `S` | stack the current mode, then pick another to layer on top |
@@ -66,7 +66,7 @@ arrow and punctuation keys work too.
 | 2 | TEAR | wrong line stride in bands: tearing, shearing, smeared diagonals |
 | 3 | DEPTH | 10-bit samples read at the wrong bit depth: values wrap into contour bands |
 | 4 | SWAP | wrong Bayer order, R/B planes slip apart, LSB bytes leak in |
-| 5 | BEND | circuit-bending emulation: ADC data bits bridged, stuck or crossed (B5–B9), VREF rainbow wrap, SHP sample-hold ghosts, ADCCK clock dropouts, XV smear, XSG row repeats. Intensity connects wires 1..n; the HUD lists the connected wires |
+| 5 | BEND | circuit-bending emulation: ADC data bits bridged, stuck or crossed (B5–B9), VREF rainbow wrap, SHP sample-hold ghosts, ADCCK clock dropouts, XV smear, XSG row repeats. Each wire has its own strength; the HUD lists the connected wires |
 | 6 | JPEG | bytes flipped inside the JPEG entropy data |
 | 7 | MOSH | live: motion pushes stale pixels around. Clip: real H.264 with keyframes cut |
 | 8 | SENSOR | **experimental**: writes IMX219 registers over I2C (digital gain, mirror/flip Bayer slip, readout skipping, CSI format, test patterns). Needs `Y` to arm |
@@ -86,17 +86,25 @@ that is connected right now:
 - **Hold:** `SHIFT`+ a wire key connects that wire only while the key is down,
   on top of the ones you've pressed on. Holding a wire that is already on
   changes nothing.
-- **Intensity:** `fn`+`F` / `fn`+`X` go from 0 (no wires) to 9. Level *n*
-  connects wires 1 to *n* and clears any wires you pressed on or off.
+- **Strength:** every wire has its own strength, 1–9, starting at 5.
+  `fn`+`F` / `fn`+`X` turn up or down the last wire you pressed on, like a
+  knob that follows your hand. To go back to an earlier wire, press it twice
+  (off, then on): it keeps its strength and the knob moves to it. Wires on
+  data lines move to higher, harsher bits as you turn them up; the others
+  grow in size, gain or reach.
 
-Example: pressing `2` and `5` connects wires 2 and 5; holding `SHIFT`+`7` on
-top adds wire 7 until you let go. Wires always apply in number order, so key
-order doesn't matter. The top bar lists the connected wires. In BEND, the
-intensity bar shows one cell per wire: lit for connected, magenta for held.
+Example: press `2`, then `fn`+`F` twice, and wire 2 is at strength 7. Press
+`R`, then `fn`+`X`, and HSYNC is at 4 while wire 2 stays at 7. Holding
+`SHIFT`+`7` on top adds wire 7 until you let go. Wires always apply in key
+order, so the order you press them doesn't matter.
 
-When you've pressed wires on or off, or intensity is 0, the filename lists the
-wire keys instead of the level, e.g. `BEND_K25R` for wires 2, 5 and R
-(`BEND_OFF` for none).
+The top bar lists the connected wires with their strengths (`B8~B4:7
+HSYNC:4`). The bottom bar has one bar per wire, as tall as its strength:
+white for the one the knob is on, lit for connected, magenta for held. Next
+to it, `R:4` names the knob's wire and strength.
+
+The filename lists each connected wire's key followed by its strength, e.g.
+`BEND_K27R4` for wire 2 at 7 and R at 4 (`BEND_OFF` for none).
 
 The sensor gives each pixel as a 10-bit value (0–1023); bit 9 is the biggest
 step in brightness.
@@ -131,10 +139,7 @@ always connects the same wire, ordered roughly from subtle to wrecked:
 |---|---|---|---|---|---|---|
 | Wire | HSMEAR | HALO | DOUBLE | HSYNC | SCAN | COLADC |
 
-Intensity only runs through wires 1–9. `0` and `Q`–`U` are their own
-switches.
-
-The same intensity and held keys always give the same image.
+The same wires at the same strengths always give the same image.
 
 To hold wires over another mode, stack that mode first (`S`), then switch to
 BEND: on any other mode, `1`–`8` jump between modes instead.
@@ -149,7 +154,8 @@ Nothing is random from one shot to the next. Each mode's damage is fixed: TEAR
 always tears the same bands, JPEG always hits the same bytes, and BEND keys
 always connect the same wires. Raising the intensity only adds to what's
 already there. TEAR tears more of the same bands, harder. JPEG keeps the
-same hits and adds more. BEND connects the next wire. Nothing moves around.
+same hits and adds more. A BEND wire's strength makes that same wire harder.
+Nothing moves around.
 
 ## Output
 
