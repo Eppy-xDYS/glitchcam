@@ -173,3 +173,9 @@ shows `ENC` while that runs, and quitting the app doesn't interrupt it.
 - Logs: `~/.cache/glitchcam.log`.
 - Env knobs: `GLITCHCAM_DIR` (save folder), `GLITCHCAM_CLIP_MAX` (seconds),
   `GLITCHCAM_FLIP=0` (if the image is upside down on your unit), `GLITCHCAM_DEBUG=1`.
+
+## License
+
+GlitchCam is released under the [MIT License](LICENSE). The Space Mono fonts in
+`fonts/` are by Colophon Foundry and are licensed separately under the
+[SIL Open Font License](fonts/OFL.txt).
