@@ -66,7 +66,7 @@ arrow and punctuation keys work too.
 | 2 | TEAR | wrong line stride in bands: tearing, shearing, smeared diagonals |
 | 3 | DEPTH | 10-bit samples read at the wrong bit depth: values wrap into contour bands |
 | 4 | SWAP | wrong Bayer order, R/B planes slip apart, LSB bytes leak in |
-| 5 | BEND | circuit-bending emulation: ADC data bits bridged, stuck or crossed (B5–B9), CLPOB clamp banding, SHP sample-hold ghosts, ADCCK clock dropouts, XV smear, XSG row repeats. Intensity connects wires 1..n; the HUD lists the connected wires |
+| 5 | BEND | circuit-bending emulation: ADC data bits bridged, stuck or crossed (B5–B9), VREF rainbow wrap, SHP sample-hold ghosts, ADCCK clock dropouts, XV smear, XSG row repeats. Intensity connects wires 1..n; the HUD lists the connected wires |
 | 6 | JPEG | bytes flipped inside the JPEG entropy data |
 | 7 | MOSH | live: motion pushes stale pixels around. Clip: real H.264 with keyframes cut |
 | 8 | SENSOR | **experimental**: writes IMX219 registers over I2C (digital gain, mirror/flip Bayer slip, readout skipping, CSI format, test patterns). Needs `Y` to arm |
@@ -107,7 +107,7 @@ step in brightness.
 | **B8~B4** (wire 2) | a high data line shorted to a low one | bit 4 flickers with the sensor's own noise, and every time it is on, bit 8 turns on too: smooth areas break into grainy colour speckle, thickest along tone edges |
 | **B9 LO** | the top data line stuck off | anything above half brightness drops to dark: highlights flip to shadows |
 | **B*c*<>B*d*** | two data lines crossed | the two bits trade places: tones scramble into contour bands |
-| **CLPOB** | black clamp firing on the wrong lines | horizontal bands shifted lighter or darker |
+| **VREF** (wire 3) | the ADC reference voltage pulled low | bright values overflow and wrap back to dark, each colour at its own point: rainbow rings around lights and across skies, like a thermal camera |
 | **SHP** | sample-and-hold timing off | colour ghosts slid sideways: red shifted, blue smeared, green doubled |
 | **ADCCK** | ADC clock dropouts | in some bands, pixels repeat across columns: blocky streaks |
 | **XV2** | vertical clock off | bright areas smear downward like bleeding charge |
@@ -125,7 +125,7 @@ always connects the same wire, ordered roughly from subtle to wrecked:
 
 | Key | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 0 |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Wire | B8~B7 | B8~B4 | CLPOB | SHP | XV2 | B7<>B6 | ADCCK | XSG | B9 LO | PCLK |
+| Wire | B8~B7 | B8~B4 | VREF | SHP | XV2 | B7<>B6 | ADCCK | XSG | B9 LO | PCLK |
 
 | Key | Q | W | E | R | T | U |
 |---|---|---|---|---|---|---|

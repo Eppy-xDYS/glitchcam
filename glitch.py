@@ -202,7 +202,7 @@ def depth_luts(raw, level):
 
 # --------------------------------------------------------------------------
 # BEND: circuit-bending emulation. On a CCD camera you bridge the AFE's ADC
-# data pins (B0..B11), clamp (CLPOB/CLPDM), sample-hold (SHP/SHD), ADC clock
+# data pins (B0..B11), ADC reference, sample-hold (SHP/SHD), ADC clock
 # and the CCD vertical clocks (XV/XSG). The IMX219 has all of that inside the
 # chip, so each "wire" is emulated on the 10-bit samples at the same stage.
 # --------------------------------------------------------------------------
@@ -213,7 +213,7 @@ def depth_luts(raw, level):
 BEND_WIRES = [
     ("B8~B7", ("bridge", 8, 7)),          # 1: two high data lines shorted
     ("B8~B4", ("bridge", 8, 4)),          # 2: high line shorted to a noisy low one: speckle
-    ("CLPOB", ("clamp", 101, 100)),       # 3: black clamp on the wrong lines
+    ("VREF", ("vref", 5.0, 6.0, 7.0)),    # 3: ADC reference low: values wrap into rainbow rings
     ("SHP", ("shp", 5)),                  # 4: sample-and-hold timing off
     ("XV2", ("xv", 0.96)),                # 5: vertical clock off: smear
     ("B7<>B6", ("swap", 7, 6)),           # 6: two data lines crossed
@@ -266,12 +266,12 @@ def apply_bend(planes, ops, qx, qy, raw):
                     bb = (v >> op[2]) & 1
                     v = (v & ~((1 << op[1]) | (1 << op[2]))) | (ba << op[2]) | (bb << op[1])
                 planes[i] = v
-        elif kind == "clamp":  # black clamp pulses on the wrong lines: banding
-            brng = np.random.default_rng(op[1])
-            edges = np.sort(brng.integers(0, raw.qh, 14))
-            lvls = brng.integers(-1, 2, 15) * op[2] * brng.uniform(0.5, 1.5, 15)
-            off = lvls[np.searchsorted(edges, qy)].astype(np.int32)[:, None]
-            planes = [(v + off) & 1023 for v in planes]
+        elif kind == "vref":  # ADC reference pulled low: the input overflows the range and
+            # wraps back to dark; each colour wraps at its own point, so rings go rainbow
+            ri, g1, g2, bi = assign(raw.order, 0, 1, 2, 3)
+            gain = {ri: op[1], g1: op[2], g2: op[2], bi: op[3]}
+            planes = [((np.maximum(v - 64, 0) * gain[i]).astype(np.int32) & 1023) + 64
+                      for i, v in enumerate(planes)]
         elif kind == "pclk":  # pixel clock slips: every sample lands one pixel late,
             # so the Bayer phase shifts and green reads as red/blue (pink/green flip)
             nxt = _remap(qx, qx + 1)
