@@ -177,5 +177,5 @@ shows `ENC` while that runs, and quitting the app doesn't interrupt it.
 ## License
 
 GlitchCam is released under the [MIT License](LICENSE). The Space Mono fonts in
-`fonts/` are by Colophon Foundry and are licensed separately under the
+`fonts/` are by The Space Mono Project Authors and are licensed separately under the
 [SIL Open Font License](fonts/OFL.txt).
